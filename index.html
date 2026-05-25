@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TanTan Stats</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#111111" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-title" content="TanTan Stats" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #f5f5f3; font-family: 'DM Sans', sans-serif; }
+    #root { min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module">
+    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+    import { createElement as h, useState, useEffect } from 'https://esm.sh/react@18';
+    import { createRoot } from 'https://esm.sh/react-dom@18/client';
+
+    const SUPABASE_URL = "https://yraslxxvuvkpkosystso.supabase.co";
+    const SUPABASE_KEY = "sb_publi6_ERkSDRmt9IZ0Bq7hREhozA_Xa1oAgBH";
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const SALONS = [
+      { id: "lavalette",  name: "La Valette", emoji: "✂️" },
+      { id: "puget",      name: "Puget",      emoji: "💈" },
+      { id: "draguignan", name: "Draguignan", emoji: "🪒" },
+    ];
+    const APP_PASSWORD = "barber2024";
+    const SALON_EMPLOYEES = {
+      lavalette:  ["Tan", "Theo", "Eric", "Nasser", "Nael", "Cutman", "Manon"],
+      puget:      ["Rs cut", "Sonic", "Manon"],
+      draguignan: ["Camille", "Colombien", "Manon", "Nael"],
+    };
+    const DAYS = ["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
+    const MONTHS = ["Jan","Fev","Mar","Avr","Mai","Jun","Jul","Aou","Sep","Oct","Nov","Dec"];
+
+    function getTodayKey() {
+      const d = new Date();
+      return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    }
+
+    const T = {
+      bg:"#f5f5f3", surface:"#ffffff", border:"#e8e8e6", text:"#111111",
+      muted:"#888888", faint:"#f0f0ee", green:"#2d7a4f", blue:"#1a5a8a",
+      greenBg:"#edf7f1", blueBg:"#eaf2fb", red:"#c0392b",
+    };
+
+    const css = `
+      @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Bebas+Neue&display=swap');
+      *{-webkit-tap-highlight-color:transparent}
+      button:active{opacity:.75;transform:scale(.98)}
+      input::placeholder{color:#bbb}
+      input:focus{border-color:#111!important;outline:none}
+      body{background:#f5f5f3}
+      ::-webkit-scrollbar{display:none}
+      @keyframes spin{to{transform:rotate(360deg)}}
+    `;
+
+    // ── App principale ──
+    function App() {
+      const [view, setView] = useState("password");
+      const [currentSalon, setCurrentSalon] = useState(null);
+      const [currentEmployee, setCurrentEmployee] = useState(null);
+      const [allData, setAllData] = useState({});
+      const [allProducts, setAllProducts] = useState({});
+      const [loaded, setLoaded] = useState(false);
+      const [pwInput, setPwInput] = useState("");
+      const [pwError, setPwError] = useState(false);
+      const [revEsp, setRevEsp] = useState("");
+      const [revCB, setRevCB] = useState("");
+      const [clients, setClients] = useState("");
+      const [savedToday, setSavedToday] = useState(false);
+      const [prodEsp, setProdEsp] = useState("");
+      const [prodCB, setProdCB] = useState("");
+      const [savedProd, setSavedProd] = useState(false);
+      const [myPeriod, setMyPeriod] = useState("today");
+      const [mgrPeriod, setMgrPeriod] = useState("today");
+      const [rankPeriod, setRankPeriod] = useState("month");
+      const [allSalonsData, setAllSalonsData] = useState(null);
+      const [rankLoading, setRankLoading] = useState(false);
+
+      const EMPLOYEES = currentSalon ? (SALON_EMPLOYEES[currentSalon] || []) : [];
+      const salonObj = SALONS.find(s => s.id === currentSalon);
+
+      useEffect(() => {
+        if (!currentSalon) return;
+        let cancelled = false;
+        (async () => {
+          try {
+            const [srvRes, prodRes] = await Promise.all([
+              supabase.from('services').select('*').eq('salon', currentSalon),
+              supabase.from('produits').select('*').eq('salon', currentSalon)
+            ]);
+            if (cancelled) return;
+            const d = {};
+            (srvRes.data || []).forEach(e => {
+              if (!d[e.employe]) d[e.employe] = {};
+              d[e.employe][e.date_key] = { especes: e.especes, cb: e.cb, revenue: e.revenue, clients: e.clients, day: e.jour, month: e.mois, year: e.annee, date: e.date, _id: e.id };
+            });
+            const p = {};
+            (prodRes.data || []).forEach(e => {
+              if (!p[e.employe]) p[e.employe] = {};
+              p[e.employe][e.date_key + '-' + e.id] = { especes: e.especes, cb: e.cb, total: e.total, month: e.mois, year: e.annee, dateKey: e.date_key, date: e.date, _id: e.id };
+            });
+            setAllData(d); setAllProducts(p); setLoaded(true);
+          } catch(err) { setLoaded(true); }
+        })();
+        return () => { cancelled = true; };
+      }, [currentSalon]);
+
+      async function saveService(newData, emp, dateKey, entry) {
+        if (entry._id) {
+          await supabase.from('services').update({ especes: entry.especes, cb: entry.cb, revenue: entry.revenue, clients: entry.clients }).eq('id', entry._id);
+        } else {
+          const { data } = await supabase.from('services').insert([{ salon: currentSalon, employe: emp, date: entry.date, date_key: dateKey, especes: entry.especes, cb: entry.cb, revenue: entry.revenue, clients: entry.clients, jour: entry.day, mois: entry.month, annee: entry.year }]).select();
+          if (data?.[0]) { newData[emp][dateKey]._id = data[0].id; setAllData({...newData}); }
+        }
+        setAllData({...newData});
+      }
+
+      async function saveProduct(emp, entry) {
+        const { data } = await supabase.from('produits').insert([{ salon: currentSalon, employe: emp, date: entry.date, date_key: entry.dateKey, especes: entry.especes, cb: entry.cb, total: entry.total, mois: entry.month, annee: entry.year }]).select();
+        return data?.[0]?.id;
+      }
+
+      function handleLogin(emp) {
+        setCurrentEmployee(emp); setView("dashboard");
+        setSavedToday(false); setSavedProd(false);
+        const entry = allData?.[emp]?.[getTodayKey()];
+        if (entry) { setRevEsp(entry.especes ?? ""); setRevCB(entry.cb ?? ""); setClients(entry.clients || ""); setSavedToday(true); }
+        else { setRevEsp(""); setRevCB(""); setClients(""); }
+      }
+
+      const totalSrv = (parseFloat(revEsp)||0) + (parseFloat(revCB)||0);
+
+      async function handleSubmitDay() {
+        if (!revEsp && !revCB && !clients) return;
+        const now = new Date(), key = getTodayKey();
+        const entry = { especes: parseFloat(revEsp)||0, cb: parseFloat(revCB)||0, revenue: totalSrv, clients: parseInt(clients)||0, day: now.getDay(), month: now.getMonth(), year: now.getFullYear(), date: now.toLocaleDateString("fr-FR") };
+        const newData = { ...allData, [currentEmployee]: { ...(allData[currentEmployee]||{}), [key]: { ...(allData[currentEmployee]?.[key]||{}), ...entry } } };
+        await saveService(newData, currentEmployee, key, newData[currentEmployee][key]);
+        setSavedToday(true);
+      }
+
+      async function handleAddProduct() {
+        if (!prodEsp && !prodCB) return;
+        const now = new Date();
+        const esp = parseFloat(prodEsp)||0, cb = parseFloat(prodCB)||0;
+        const entry = { especes: esp, cb, total: esp+cb, month: now.getMonth(), year: now.getFullYear(), dateKey: getTodayKey(), date: now.toLocaleDateString("fr-FR") };
+        const id = await saveProduct(currentEmployee, entry);
+        const key = `${getTodayKey()}-${id||Date.now()}`;
+        const newProds = { ...allProducts, [currentEmployee]: { ...(allProducts[currentEmployee]||{}), [key]: { ...entry, _id: id } } };
+        setAllProducts(newProds);
+        setProdEsp(""); setProdCB(""); setSavedProd(true); setTimeout(() => setSavedProd(false), 2000);
+      }
+
+      function getEmpTotals(emp, period, data, products) {
+        const d = data || allData, p = products || allProducts;
+        const now = new Date(), todayKey = getTodayKey();
+        let srvEsp=0, srvCB=0, prodEsp=0, prodCB=0, nbClients=0;
+        Object.values(d[emp]||{}).forEach(e => {
+          const m = period==="today"?(e.date===now.toLocaleDateString("fr-FR")&&e.year===now.getFullYear()):period==="month"?(e.year===now.getFullYear()&&e.month===now.getMonth()):(e.year===now.getFullYear());
+          if(m){ srvEsp+=e.especes!==undefined?e.especes:(e.revenue||0); srvCB+=(e.cb||0); nbClients+=e.clients; }
+        });
+        Object.values(p[emp]||{}).forEach(e => {
+          const m = period==="today"?e.dateKey===todayKey:period==="month"?(e.year===now.getFullYear()&&e.month===now.getMonth()):(e.year===now.getFullYear());
+          if(m){ prodEsp+=e.especes!==undefined?e.especes:(e.total||0); prodCB+=(e.cb||0); }
+        });
+        return { srvEsp, srvCB, prodEsp, prodCB, nbClients, srvTotal:srvEsp+srvCB, prodTotal:prodEsp+prodCB, grand:srvEsp+srvCB+prodEsp+prodCB };
+      }
+
+      function getSalonTotals(period) {
+        let sE=0,sC=0,pE=0,pC=0,nC=0; const byEmp={};
+        EMPLOYEES.forEach(emp => { const t=getEmpTotals(emp,period); sE+=t.srvEsp; sC+=t.srvCB; pE+=t.prodEsp; pC+=t.prodCB; nC+=t.nbClients; byEmp[emp]=t; });
+        return { srvEsp:sE,srvCB:sC,prodEsp:pE,prodCB:pC,srvTotal:sE+sC,prodTotal:pE+pC,totalEsp:sE+pE,totalCB:sC+pC,grand:sE+sC+pE+pC,nbClients:nC,byEmp };
+      }
+
+      function getStatsForEmployee(emp) {
+        const entries=Object.values(allData[emp]||{});
+        const byDay=Array(7).fill(0).map(()=>({rev:0,clients:0})), byMonth=Array(12).fill(0).map(()=>({rev:0,clients:0}));
+        entries.forEach(e=>{ const d=e.day===0?6:e.day-1; byDay[d].rev+=e.revenue; byDay[d].clients+=e.clients; byMonth[e.month].rev+=e.revenue; byMonth[e.month].clients+=e.clients; });
+        return { byDay, byMonth, total:entries.reduce((s,e)=>s+e.revenue,0), totalClients:entries.reduce((s,e)=>s+e.clients,0) };
+      }
+
+      function getAllStats() {
+        let tR=0,tC=0,tP=0;
+        const byDay=Array(7).fill(0).map(()=>({rev:0,clients:0})), byMonth=Array(12).fill(0).map(()=>({rev:0,clients:0})), empStats={};
+        EMPLOYEES.forEach(emp=>{ const s=getStatsForEmployee(emp); empStats[emp]=s; tR+=s.total; tC+=s.totalClients; s.byDay.forEach((d,i)=>{byDay[i].rev+=d.rev;}); s.byMonth.forEach((m,i)=>{byMonth[i].rev+=m.rev;}); });
+        EMPLOYEES.forEach(emp=>{ Object.values(allProducts[emp]||{}).forEach(p=>{tP+=p.total;}); });
+        return { totalRev:tR, totalClients:tC, totalProd:tP, byDay, byMonth, empStats };
+      }
+
+      async function loadAllSalons() {
+        setRankLoading(true);
+        const result = {};
+        for (const s of SALONS) {
+          let d={}, p={};
+          try { const r = await supabase.from('services').select('*').eq('salon', s.id); (r.data||[]).forEach(e=>{ if(!d[e.employe])d[e.employe]={}; d[e.employe][e.date_key]={especes:e.especes,cb:e.cb,revenue:e.revenue,clients:e.clients,day:e.jour,month:e.mois,year:e.annee,date:e.date}; }); } catch{}
+          try { const r = await supabase.from('produits').select('*').eq('salon', s.id); (r.data||[]).forEach(e=>{ if(!p[e.employe])p[e.employe]={}; p[e.employe][e.date_key+'-'+e.id]={especes:e.especes,cb:e.cb,total:e.total,month:e.mois,year:e.annee,dateKey:e.date_key}; }); } catch{}
+          result[s.id] = { data:d, products:p };
+        }
+        setAllSalonsData(result); setRankLoading(false);
+      }
+
+      function getCrossSalonRanking(period) {
+        if (!allSalonsData) return [];
+        const rows = [];
+        SALONS.forEach(salon => {
+          const { data, products } = allSalonsData[salon.id] || { data:{}, products:{} };
+          (SALON_EMPLOYEES[salon.id]||[]).forEach(emp => {
+            const t = getEmpTotals(emp, period, data, products);
+            if (t.grand > 0) rows.push({ emp, salon:salon.name, salonId:salon.id, srvTotal:t.srvTotal, prodTotal:t.prodTotal, grand:t.grand });
+          });
+        });
+        return rows.sort((a,b)=>b.grand-a.grand);
+      }
+
+      const stats = loaded ? getAllStats() : null;
+      const maxDay = stats ? Math.max(...stats.byDay.map(d=>d.rev),1) : 1;
+      const maxMonth = stats ? Math.max(...stats.byMonth.map(m=>m.rev),1) : 1;
+      const myProdsMonth = currentEmployee ? Object.values(allProducts[currentEmployee]||{}).filter(p=>{ const now=new Date(); return p.month===now.getMonth()&&p.year===now.getFullYear(); }) : [];
+      const myT = loaded && currentEmployee ? getEmpTotals(currentEmployee, myPeriod) : null;
+      const mgrT = loaded ? getSalonTotals(mgrPeriod) : null;
+      const periodStr = p => ({today:new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"}),month:new Date().toLocaleDateString("fr-FR",{month:"long",year:"numeric"}),year:`Année ${new Date().getFullYear()}`}[p]);
+
+      const IS = { width:"100%", background:T.surface, border:`1.5px solid ${T.border}`, borderRadius:10, padding:"12px 14px", color:T.text, fontSize:16, fontFamily:"'DM Sans',sans-serif", boxSizing:"border-box" };
+
+      const PeriodSel = ({value, onChange}) => h('div', {style:{display:"flex",background:T.faint,borderRadius:10,padding:3,gap:3,marginBottom:20}},
+        [["today","Aujourd'hui"],["month","Ce mois"],["year","Cette année"]].map(([p,label]) =>
+          h('button', {key:p, onClick:()=>onChange(p), style:{flex:1,background:value===p?T.surface:"transparent",color:value===p?T.text:T.muted,border:"none",borderRadius:8,padding:"9px 4px",cursor:"pointer",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:value===p?"600":"400",boxShadow:value===p?"0 1px 4px rgba(0,0,0,0.08)":"none"}}, label)
+        )
+      );
+
+      const RankBlock = ({title, items, maxVal, totalVal, currentEmp}) => h('div', {style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:20,marginBottom:12}},
+        h('div', {style:{color:T.text,fontSize:13,fontWeight:"700",marginBottom:14}}, title),
+        totalVal===0 ? h('div', {style:{color:T.muted,fontSize:12,textAlign:"center",padding:"8px 0"}}, "Aucune donnée") :
+        items.filter(e=>e.val>0).map((item,rank) => {
+          const pct = totalVal>0?(item.val/totalVal)*100:0, isMe=item.emp===currentEmp;
+          return h('div', {key:item.emp, style:{marginBottom:12}},
+            h('div', {style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}},
+              h('div', {style:{display:"flex",alignItems:"center",gap:8}},
+                h('span', {style:{fontSize:13,width:22}}, ["🥇","🥈","🥉"][rank]||`${rank+1}.`),
+                h('div', {style:{width:26,height:26,borderRadius:"50%",background:isMe?T.text:T.faint,color:isMe?"#fff":T.muted,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:"700"}}, item.emp[0]),
+                h('div', null,
+                  h('div', {style:{color:T.text,fontSize:13,fontWeight:isMe?"700":"500"}}, item.emp + (isMe?" · vous":"")),
+                  h('div', {style:{fontSize:10,color:T.muted}}, `💵 ${item.esp.toFixed(0)}€ · 💳 ${item.cb.toFixed(0)}€`)
+                )
+              ),
+              h('div', {style:{textAlign:"right"}},
+                h('div', {style:{color:T.text,fontWeight:"700",fontSize:15}}, `${item.val.toFixed(0)}€`),
+                h('div', {style:{color:T.muted,fontSize:10}}, `${pct.toFixed(0)}%`)
+              )
+            ),
+            h('div', {style:{height:3,background:T.faint,borderRadius:2,overflow:"hidden"}},
+              h('div', {style:{width:`${(item.val/maxVal)*100}%`,height:"100%",background:isMe?T.text:`${T.text}22`,borderRadius:2}})
+            )
+          );
+        })
+      );
+
+      if (!loaded && currentSalon) return h('div', {style:{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}},
+        h('div', {style:{textAlign:"center"}},
+          h('div', {style:{width:36,height:36,border:`3px solid ${T.border}`,borderTopColor:T.text,borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"0 auto 12px"}}),
+          h('div', {style:{color:T.muted,fontSize:14}}, "Chargement...")
+        )
+      );
+
+      return h('div', {style:{background:T.bg,minHeight:"100vh",fontFamily:"'DM Sans',sans-serif",color:T.text,paddingBottom:48}},
+        h('style', null, css),
+
+        // HEADER
+        h('div', {style:{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100}},
+          h('div', {style:{display:"flex",alignItems:"center",gap:10}},
+            h('div', {style:{width:34,height:34,borderRadius:6,overflow:"hidden",flexShrink:0}},
+              h('img', {src:"logo.png", alt:"TanTan", style:{width:"100%",height:"100%",objectFit:"cover",display:"block"},
+                onError: e => { e.target.style.display='none'; e.target.parentNode.innerHTML='✂️'; }})
+            ),
+            h('div', null,
+              h('div', {style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:"0.05em",lineHeight:1}}, "TanTan Stats"),
+              salonObj && h('div', {style:{color:T.muted,fontSize:11}}, salonObj.name)
+            )
+          ),
+          h('div', {style:{display:"flex",gap:8,alignItems:"center"}},
+            currentEmployee && h('div', {style:{background:T.faint,borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:"600"}}, currentEmployee),
+            currentEmployee && h('button', {onClick:()=>{setCurrentEmployee(null);setView("login");}, style:{background:"none",border:`1px solid ${T.border}`,borderRadius:8,color:T.muted,padding:"4px 10px",cursor:"pointer",fontSize:11,fontFamily:"'DM Sans',sans-serif"}}, "Déco"),
+            !currentEmployee && currentSalon && h('button', {onClick:()=>{setCurrentSalon(null);setView("salon");setLoaded(false);}, style:{background:"none",border:`1px solid ${T.border}`,borderRadius:8,color:T.muted,padding:"4px 10px",cursor:"pointer",fontSize:11,fontFamily:"'DM Sans',sans-serif"}}, "← Salons")
+          )
+        ),
+
+        // NAV
+        currentEmployee && h('div', {style:{background:T.surface,borderBottom:`1px solid ${T.border}`,display:"flex",overflowX:"auto",padding:"0 12px"}},
+          [["dashboard","Saisie"],["totaux","Mes résultats"],["manager","Manager"],["ranking","Top Salons"],["stats","Stats"]].map(([v,label]) =>
+            h('button', {key:v, onClick:()=>setView(v), style:{background:"none",border:"none",borderBottom:view===v?`2px solid ${T.text}`:"2px solid transparent",color:view===v?T.text:T.muted,padding:"12px 12px",cursor:"pointer",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:view===v?"700":"500",whiteSpace:"nowrap"}}, label)
+          )
+        ),
+
+        h('div', {style:{padding:"20px 16px",maxWidth:520,margin:"0 auto"}},
+
+          // PASSWORD
+          view==="password" && h('div', {style:{paddingTop:40}},
+            h('div', {style:{textAlign:"center",marginBottom:32}},
+              h('div', {style:{width:80,height:80,borderRadius:16,overflow:"hidden",margin:"0 auto 14px",boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}},
+                h('img', {src:"logo.png",alt:"TanTan",style:{width:"100%",height:"100%",objectFit:"cover",display:"block"}})
+              ),
+              h('div', {style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:36,letterSpacing:"0.08em",lineHeight:1,marginBottom:6}}, "TanTan Stats"),
+              h('div', {style:{color:T.muted,fontSize:14}}, "Entrez votre mot de passe")
+            ),
+            h('div', {style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:16,padding:24}},
+              h('input', {type:"password",value:pwInput,onChange:e=>{setPwInput(e.target.value);setPwError(false);},onKeyDown:e=>e.key==="Enter"&&(pwInput===APP_PASSWORD?(setPwError(false),setPwInput(""),setView("salon")):(setPwError(true),setPwInput(""))),placeholder:"Mot de passe",autoFocus:true,style:{...IS,textAlign:"center",letterSpacing:4,fontSize:20,marginBottom:10,borderColor:pwError?"#c0392b":T.border}}),
+              pwError && h('div', {style:{color:T.red,fontSize:13,textAlign:"center",marginBottom:10}}, "Mot de passe incorrect"),
+              h('button', {onClick:()=>{ if(pwInput===APP_PASSWORD){setPwError(false);setPwInput("");setView("salon");}else{setPwError(true);setPwInput("");} }, style:{width:"100%",background:T.text,border:"none",borderRadius:10,padding:"14px",color:"#fff",fontSize:15,fontFamily:"'DM Sans',sans-serif",fontWeight:"700",cursor:"pointer"}}, "Accéder →")
+            )
+          ),
+
+          // SALON
+          view==="salon" && h('div', {style:{paddingTop:16}},
+            h('div', {style:{marginBottom:24}},
+              h('div', {style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,letterSpacing:"0.05em",marginBottom:4}}, "Choisissez votre salon"),
+              h('div', {style:{color:T.muted,fontSize:14}}, "Sélectionnez pour continuer")
+            ),
+            h('div', {style:{display:"flex",flexDirection:"column",gap:10}},
+              SALONS.map(salon => h('button', {key:salon.id, onClick:()=>{setCurrentSalon(salon.id);setView("login");setLoaded(false);}, style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:"18px 20px",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",display:"flex",alignItems:"center",gap:14,textAlign:"left",boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}},
+                h('div', {style:{width:44,height:44,background:T.faint,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}, salon.emoji),
+                h('div', {style:{flex:1}},
+                  h('div', {style:{fontWeight:"700",fontSize:17,color:T.text,marginBottom:2}}, salon.name),
+                  h('div', {style:{color:T.muted,fontSize:12}}, `${SALON_EMPLOYEES[salon.id].length} barbiers`)
+                ),
+                h('div', {style:{color:T.muted,fontSize:18}}, "›")
+              ))
+            )
+          ),
+
+          // LOGIN
+          view==="login" && h('div', {style:{paddingTop:16}},
+            h('div', {style:{marginBottom:20}},
+              h('div', {style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:"0.05em",marginBottom:4}}, "Qui êtes-vous ?"),
+              h('div', {style:{color:T.muted,fontSize:14}}, `${salonObj?.name} — sélectionnez votre nom`)
+            ),
+            h('div', {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}},
+              EMPLOYEES.map(emp => h('button', {key:emp, onClick:()=>handleLogin(emp), style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"16px 10px",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",gap:8}},
+                h('div', {style:{width:40,height:40,background:T.faint,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:"700",color:T.text}}, emp[0].toUpperCase()),
+                h('div', {style:{color:T.text,fontSize:14,fontWeight:"600"}}, emp)
+              ))
+            )
+          ),
+
+          // DASHBOARD
+          view==="dashboard" && currentEmployee && h('div', {style:{paddingTop:4}},
+            h('div', {style:{color:T.muted,fontSize:11,fontWeight:"600",letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:16}}, new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})),
+
+            h('div', {style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:20,marginBottom:12,boxShadow:"0 1px 4px rgba(0,0,0,0.05)"}},
+              h('div', {style:{fontWeight:"700",fontSize:14,marginBottom:14}}, "✂️ Services du jour"),
+              h('div', {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}},
+                h('div', null, h('label', {style:{color:T.green,fontSize:11,fontWeight:"600",display:"block",marginBottom:5}}, "💵 ESPÈCES (€)"), h('input', {type:"number",value:revEsp,onChange:e=>{setRevEsp(e.target.value);setSavedToday(false);},placeholder:"0",style:{...IS,borderColor:revEsp?"#2d7a4f44":T.border}})),
+                h('div', null, h('label', {style:{color:T.blue,fontSize:11,fontWeight:"600",display:"block",marginBottom:5}}, "💳 CARTE (€)"), h('input', {type:"number",value:revCB,onChange:e=>{setRevCB(e.target.value);setSavedToday(false);},placeholder:"0",style:{...IS,borderColor:revCB?"#1a5a8a44":T.border}}))
+              ),
+              (revEsp||revCB) && h('div', {style:{display:"flex",justifyContent:"space-between",background:T.faint,borderRadius:8,padding:"10px 14px",marginBottom:10}}, h('span', {style:{color:T.muted,fontSize:12,fontWeight:"500"}}, "Total services"), h('span', {style:{color:T.text,fontWeight:"700",fontSize:17}}, `${totalSrv.toFixed(2)}€`)),
+              h('div', {style:{marginBottom:12}}, h('label', {style:{color:T.muted,fontSize:11,fontWeight:"600",display:"block",marginBottom:5}}, "👤 NB CLIENTS"), h('input', {type:"number",value:clients,onChange:e=>{setClients(e.target.value);setSavedToday(false);},placeholder:"0",style:IS})),
+              h('button', {onClick:handleSubmitDay, style:{width:"100%",background:savedToday?"#edf7f1":T.text,border:savedToday?`1px solid ${T.green}`:"none",borderRadius:10,padding:"13px",color:savedToday?T.green:"#fff",fontSize:14,fontFamily:"'DM Sans',sans-serif",fontWeight:"700",cursor:"pointer"}}, savedToday?"✓ Enregistré":"Enregistrer")
+            ),
+
+            h('div', {style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:20,marginBottom:12}},
+              h('div', {style:{fontWeight:"700",fontSize:14,marginBottom:14}}, "🧴 Vente produit"),
+              h('div', {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}},
+                h('div', null, h('label', {style:{color:T.green,fontSize:11,fontWeight:"600",display:"block",marginBottom:5}}, "💵 ESPÈCES (€)"), h('input', {type:"number",value:prodEsp,onChange:e=>setProdEsp(e.target.value),placeholder:"0",style:{...IS,borderColor:prodEsp?"#2d7a4f44":T.border}})),
+                h('div', null, h('label', {style:{color:T.blue,fontSize:11,fontWeight:"600",display:"block",marginBottom:5}}, "💳 CARTE (€)"), h('input', {type:"number",value:prodCB,onChange:e=>setProdCB(e.target.value),placeholder:"0",style:{...IS,borderColor:prodCB?"#1a5a8a44":T.border}}))
+              ),
+              (prodEsp||prodCB) && h('div', {style:{display:"flex",justifyContent:"space-between",background:T.faint,borderRadius:8,padding:"10px 14px",marginBottom:10}}, h('span', {style:{color:T.muted,fontSize:12}}, "Total produits"), h('span', {style:{color:T.text,fontWeight:"700",fontSize:17}}, `${((parseFloat(prodEsp)||0)+(parseFloat(prodCB)||0)).toFixed(2)}€`)),
+              h('button', {onClick:handleAddProduct, style:{width:"100%",background:savedProd?"#edf7f1":T.faint,border:savedProd?`1px solid ${T.green}`:`1px solid ${T.border}`,borderRadius:10,padding:"13px",color:savedProd?T.green:T.text,fontSize:14,fontFamily:"'DM Sans',sans-serif",fontWeight:"700",cursor:"pointer"}}, savedProd?"✓ Ajouté !":(prodEsp||prodCB)?`+ Enregistrer — ${((parseFloat(prodEsp)||0)+(parseFloat(prodCB)||0)).toFixed(2)}€`:"+ Enregistrer la vente")
+            ),
+
+            myProdsMonth.length>0 && h('div', {style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 16px",marginBottom:12}},
+              h('div', {style:{display:"flex",justifyContent:"space-between",marginBottom:8}}, h('span', {style:{color:T.muted,fontSize:11,fontWeight:"600",textTransform:"uppercase"}}, "Produits ce mois"), h('span', {style:{color:T.text,fontWeight:"700",fontSize:14}}, `${myProdsMonth.reduce((s,p)=>s+p.total,0).toFixed(2)}€`)),
+              h('div', {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}},
+                h('div', {style:{background:T.greenBg,borderRadius:8,padding:"10px",textAlign:"center"}}, h('div', {style:{color:T.green,fontWeight:"700",fontSize:15}}, `${myProdsMonth.reduce((s,p)=>s+(p.especes||0),0).toFixed(2)}€`), h('div', {style:{color:T.green,fontSize:10,marginTop:2}}, "💵 Espèces")),
+                h('div', {style:{background:T.blueBg,borderRadius:8,padding:"10px",textAlign:"center"}}, h('div', {style:{color:T.blue,fontWeight:"700",fontSize:15}}, `${myProdsMonth.reduce((s,p)=>s+(p.cb||0),0).toFixed(2)}€`), h('div', {style:{color:T.blue,fontSize:10,marginTop:2}}, "💳 Carte"))
+              )
+            ),
+
+            stats?.empStats[currentEmployee] && h('div', {style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}},
+              [["💰","Revenus",`${stats.empStats[currentEmployee].total.toFixed(0)}€`],["👥","Clients",stats.empStats[currentEmployee].totalClients],["🧴","Produits",`${myProdsMonth.reduce((s,p)=>s+p.total,0).toFixed(0)}€`]].map(([icon,label,val]) =>
+                h('div', {key:label, style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 8px",textAlign:"center"}},
+                  h('div', {style:{fontSize:16}}, icon),
+                  h('div', {style:{color:T.text,fontWeight:"700",fontSize:15}}, val),
+                  h('div', {style:{color:T.muted,fontSize:10}}, label)
+                )
+              )
+            )
+          ),
+
+          // MES RÉSULTATS
+          view==="totaux" && currentEmployee && myT && h('div', {style:{paddingTop:4}},
+            h('div', {style:{marginBottom:20}}, h('div', {style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:"0.05em",marginBottom:2}}, "Mes résultats"), h('div', {style:{color:T.muted,fontSize:13}}, `${currentEmployee} · ${salonObj?.name}`)),
+            h(PeriodSel, {value:myPeriod, onChange:setMyPeriod}),
+            h('div', {style:{color:T.muted,fontSize:11,fontWeight:"600",letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:14,textAlign:"center"}}, periodStr(myPeriod)),
+            h('div', {style:{background:T.text,borderRadius:16,padding:"28px 20px",textAlign:"center",marginBottom:12}},
+              h('div', {style:{color:"rgba(255,255,255,0.5)",fontSize:11,fontWeight:"600",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}, "Mon chiffre d'affaire"),
+              h('div', {style:{color:"#fff",fontSize:46,fontWeight:"700",letterSpacing:"-0.03em",lineHeight:1,fontFamily:"'Bebas Neue',sans-serif"}}, `${myT.grand.toFixed(2)}€`),
+              h('div', {style:{color:"rgba(255,255,255,0.4)",fontSize:12,marginTop:8}}, `${myT.nbClients} clients`)
+            ),
+            h('div', {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}},
+              h('div', {style:{background:T.greenBg,border:`1px solid ${T.green}22`,borderRadius:12,padding:"16px 12px",textAlign:"center"}},
+                h('div', {style:{fontSize:18,marginBottom:4}}, "💵"),
+                h('div', {style:{color:T.green,fontWeight:"700",fontSize:22}}, `${(myT.srvEsp+myT.prodEsp).toFixed(2)}€`),
+                h('div', {style:{color:T.green,fontSize:11,marginTop:3}}, "Espèces"),
+                h('div', {style:{marginTop:8,borderTop:`1px solid ${T.green}22`,paddingTop:8}},
+                  h('div', {style:{color:T.green,fontSize:10,opacity:.6}}, `Services : ${myT.srvEsp.toFixed(0)}€`),
+                  h('div', {style:{color:T.green,fontSize:10,opacity:.6}}, `Produits : ${myT.prodEsp.toFixed(0)}€`)
+                )
+              ),
+              h('div', {style:{background:T.blueBg,border:`1px solid ${T.blue}22`,borderRadius:12,padding:"16px 12px",textAlign:"center"}},
+                h('div', {style:{fontSize:18,marginBottom:4}}, "💳"),
+                h('div', {style:{color:T.blue,fontWeight:"700",fontSize:22}}, `${(myT.srvCB+myT.prodCB).toFixed(2)}€`),
+                h('div', {style:{color:T.blue,fontSize:11,marginTop:3}}, "Carte Bleue"),
+                h('div', {style:{marginTop:8,borderTop:`1px solid ${T.blue}22`,paddingTop:8}},
+                  h('div', {style:{color:T.blue,fontSize:10,opacity:.6}}, `Services : ${myT.srvCB.toFixed(0)}€`),
+                  h('div', {style:{color:T.blue,fontSize:10,opacity:.6}}, `Produits : ${myT.prodCB.toFixed(0)}€`)
+                )
+              )
+            ),
+            myT.grand>0 && h('div', {style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:20}},
+              h('div', {style:{fontWeight:"700",fontSize:13,marginBottom:14,textAlign:"center"}}, "⭐ Répartition"),
+              h('div', {style:{display:"flex",height:10,borderRadius:5,overflow:"hidden",marginBottom:14,gap:2}},
+                h('div', {style:{width:`${(myT.srvTotal/myT.grand)*100}%`,background:T.text,borderRadius:"5px 0 0 5px"}}),
+                h('div', {style:{width:`${(myT.prodTotal/myT.grand)*100}%`,background:`${T.text}44`,borderRadius:"0 5px 5px 0"}})
+              ),
+              h('div', {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}},
+                h('div', {style:{background:T.faint,borderRadius:10,padding:"14px 10px",textAlign:"center"}}, h('div', null, "✂️"), h('div', {style:{fontWeight:"700",fontSize:18,marginTop:4}}, `${myT.srvTotal.toFixed(0)}€`), h('div', {style:{color:T.muted,fontSize:11}}, "Prestations"), h('div', {style:{fontWeight:"700",fontSize:12,marginTop:2}}, `${((myT.srvTotal/myT.grand)*100).toFixed(0)}%`)),
+                h('div', {style:{background:T.faint,borderRadius:10,padding:"14px 10px",textAlign:"center"}}, h('div', null, "🧴"), h('div', {style:{fontWeight:"700",fontSize:18,marginTop:4}}, `${myT.prodTotal.toFixed(0)}€`), h('div', {style:{color:T.muted,fontSize:11}}, "Produits"), h('div', {style:{fontWeight:"700",fontSize:12,marginTop:2}}, `${((myT.prodTotal/myT.grand)*100).toFixed(0)}%`))
+              )
+            )
+          ),
+
+          // MANAGER
+          view==="manager" && currentEmployee && mgrT && h('div', {style:{paddingTop:4}},
+            h('div', {style:{marginBottom:20}}, h('div', {style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:"0.05em",marginBottom:2}}, "Vue Manager"), h('div', {style:{color:T.muted,fontSize:13}}, `${salonObj?.name} · tous les barbiers`)),
+            h(PeriodSel, {value:mgrPeriod, onChange:setMgrPeriod}),
+            h('div', {style:{color:T.muted,fontSize:11,fontWeight:"600",letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:14,textAlign:"center"}}, periodStr(mgrPeriod)),
+            h('div', {style:{background:T.text,borderRadius:16,padding:"28px 20px",textAlign:"center",marginBottom:12}},
+              h('div', {style:{color:"rgba(255,255,255,0.5)",fontSize:11,fontWeight:"600",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}, "CA Salon"),
+              h('div', {style:{color:"#fff",fontSize:46,fontWeight:"700",letterSpacing:"-0.03em",lineHeight:1,fontFamily:"'Bebas Neue',sans-serif"}}, `${mgrT.grand.toFixed(2)}€`),
+              h('div', {style:{color:"rgba(255,255,255,0.4)",fontSize:12,marginTop:8}}, `${mgrT.nbClients} clients`)
+            ),
+            h('div', {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}},
+              h('div', {style:{background:T.greenBg,border:`1px solid ${T.green}22`,borderRadius:12,padding:"14px 12px",textAlign:"center"}}, h('div', null, "💵"), h('div', {style:{color:T.green,fontWeight:"700",fontSize:20,margin:"4px 0 2px"}}, `${mgrT.totalEsp.toFixed(2)}€`), h('div', {style:{color:T.green,fontSize:11}}, "Total Espèces"), h('div', {style:{marginTop:6,borderTop:`1px solid ${T.green}22`,paddingTop:6}}, h('div', {style:{color:T.green,fontSize:10,opacity:.6}}, `Services : ${mgrT.srvEsp.toFixed(0)}€`), h('div', {style:{color:T.green,fontSize:10,opacity:.6}}, `Produits : ${mgrT.prodEsp.toFixed(0)}€`))),
+              h('div', {style:{background:T.blueBg,border:`1px solid ${T.blue}22`,borderRadius:12,padding:"14px 12px",textAlign:"center"}}, h('div', null, "💳"), h('div', {style:{color:T.blue,fontWeight:"700",fontSize:20,margin:"4px 0 2px"}}, `${mgrT.totalCB.toFixed(2)}€`), h('div', {style:{color:T.blue,fontSize:11}}, "Total Carte"), h('div', {style:{marginTop:6,borderTop:`1px solid ${T.blue}22`,paddingTop:6}}, h('div', {style:{color:T.blue,fontSize:10,opacity:.6}}, `Services : ${mgrT.srvCB.toFixed(0)}€`), h('div', {style:{color:T.blue,fontSize:10,opacity:.6}}, `Produits : ${mgrT.prodCB.toFixed(0)}€`)))
+            ),
+            h(RankBlock, {title:"✂️ Classement Prestations", items:EMPLOYEES.map(emp=>({emp,val:mgrT.byEmp[emp]?.srvTotal||0,esp:mgrT.byEmp[emp]?.srvEsp||0,cb:mgrT.byEmp[emp]?.srvCB||0})).sort((a,b)=>b.val-a.val), maxVal:Math.max(...EMPLOYEES.map(emp=>mgrT.byEmp[emp]?.srvTotal||0),1), totalVal:mgrT.srvTotal, currentEmp:currentEmployee}),
+            h(RankBlock, {title:"🧴 Classement Ventes produits", items:EMPLOYEES.map(emp=>({emp,val:mgrT.byEmp[emp]?.prodTotal||0,esp:mgrT.byEmp[emp]?.prodEsp||0,cb:mgrT.byEmp[emp]?.prodCB||0})).sort((a,b)=>b.val-a.val), maxVal:Math.max(...EMPLOYEES.map(emp=>mgrT.byEmp[emp]?.prodTotal||0),1), totalVal:mgrT.prodTotal, currentEmp:currentEmployee})
+          ),
+
+          // TOP SALONS
+          view==="ranking" && currentEmployee && h('div', {style:{paddingTop:4}},
+            h('div', {style:{marginBottom:20}}, h('div', {style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:"0.05em",marginBottom:2}}, "🏆 Top Salons"), h('div', {style:{color:T.muted,fontSize:13}}, "Classement inter-salons")),
+            h('div', {style:{display:"flex",background:T.faint,borderRadius:10,padding:3,gap:3,marginBottom:20}},
+              [["today","Aujourd'hui"],["month","Ce mois"],["year","Cette année"]].map(([p,label]) =>
+                h('button', {key:p, onClick:()=>setRankPeriod(p), style:{flex:1,background:rankPeriod===p?T.surface:"transparent",color:rankPeriod===p?T.text:T.muted,border:"none",borderRadius:8,padding:"9px 4px",cursor:"pointer",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:rankPeriod===p?"600":"400"}}, label)
+              )
+            ),
+            !allSalonsData && !rankLoading && h('button', {onClick:loadAllSalons, style:{width:"100%",background:T.text,border:"none",borderRadius:12,padding:"16px",color:"#fff",fontSize:15,fontFamily:"'DM Sans',sans-serif",fontWeight:"700",cursor:"pointer",marginBottom:20}}, "Charger le classement →"),
+            rankLoading && h('div', {style:{textAlign:"center",color:T.muted,padding:24}}, "Chargement..."),
+            allSalonsData && h('div', null,
+              h('button', {onClick:loadAllSalons, style:{width:"100%",background:T.faint,border:`1px solid ${T.border}`,borderRadius:10,padding:"10px",color:T.muted,fontSize:12,fontFamily:"'DM Sans',sans-serif",cursor:"pointer",marginBottom:16}}, "🔄 Rafraîchir"),
+              (() => {
+                const rows = getCrossSalonRanking(rankPeriod), maxVal = rows[0]?.grand||1;
+                const sColors = {"La Valette":"#1a1a1a","Puget":"#1a5a8a","Draguignan":"#5a1a8a"};
+                if(rows.length===0) return h('div', {style:{color:T.muted,textAlign:"center",padding:24}}, "Aucune donnée");
+                const top3 = rows.slice(0,3);
+                return h('div', null,
+                  h('div', {style:{display:"flex",alignItems:"flex-end",justifyContent:"center",gap:8,marginBottom:24,height:150}},
+                    [top3[1],top3[0],top3[2]].map((item,i) => {
+                      if(!item) return h('div', {key:i, style:{flex:1}});
+                      const heights=[80,110,60], medals=["🥈","🥇","🥉"], isCenter=i===1, sc=sColors[item.salon]||T.text;
+                      return h('div', {key:item.emp, style:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}},
+                        h('div', {style:{fontSize:10,color:T.text,fontWeight:isCenter?"700":"500",textAlign:"center"}}, item.emp),
+                        h('div', {style:{fontSize:9,background:`${sc}11`,border:`1px solid ${sc}33`,borderRadius:8,padding:"1px 6px",color:sc,fontWeight:"600"}}, item.salon),
+                        h('div', {style:{color:T.text,fontWeight:"700",fontSize:isCenter?14:12}}, `${item.grand.toFixed(0)}€`),
+                        h('div', {style:{width:"100%",height:heights[i],background:isCenter?T.text:T.faint,border:`1px solid ${T.border}`,borderRadius:"6px 6px 0 0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:isCenter?24:18}}, medals[i])
+                      );
+                    })
+                  ),
+                  h('div', {style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:20}},
+                    h('div', {style:{color:T.muted,fontSize:11,fontWeight:"600",letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:14}}, "Classement complet"),
+                    rows.map((item,rank) => {
+                      const isMe=item.emp===currentEmployee&&item.salonId===currentSalon, sc=sColors[item.salon]||T.text;
+                      return h('div', {key:`${item.salonId}-${item.emp}`, style:{marginBottom:12,background:isMe?T.faint:"transparent",borderRadius:8,padding:isMe?"8px":"0"}},
+                        h('div', {style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}},
+                          h('div', {style:{display:"flex",alignItems:"center",gap:8}},
+                            h('span', {style:{fontSize:13,width:24,textAlign:"center"}}, ["🥇","🥈","🥉"][rank]||`${rank+1}.`),
+                            h('div', {style:{width:30,height:30,borderRadius:"50%",background:isMe?T.text:T.faint,color:isMe?"#fff":T.text,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:"700"}}, item.emp[0]),
+                            h('div', null,
+                              h('div', {style:{color:T.text,fontSize:13,fontWeight:isMe?"700":"500"}}, item.emp + (isMe?" · vous":"")),
+                              h('div', {style:{display:"flex",alignItems:"center",gap:4}}, h('span', {style:{color:sc,fontSize:10,fontWeight:"600"}}, item.salon), h('span', {style:{color:T.muted,fontSize:10}}, `· srv ${item.srvTotal.toFixed(0)}€ · prod ${item.prodTotal.toFixed(0)}€`))
+                            )
+                          ),
+                          h('div', {style:{color:T.text,fontWeight:"700",fontSize:15}}, `${item.grand.toFixed(0)}€`)
+                        ),
+                        h('div', {style:{height:3,background:T.faint,borderRadius:2,overflow:"hidden"}}, h('div', {style:{width:`${(item.grand/maxVal)*100}%`,height:"100%",background:isMe?T.text:`${T.text}22`,borderRadius:2}}))
+                      );
+                    })
+                  )
+                );
+              })()
+            )
+          ),
+
+          // STATS
+          view==="stats" && currentEmployee && stats && h('div', {style:{paddingTop:4}},
+            h('div', {style:{marginBottom:20}}, h('div', {style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:"0.05em",marginBottom:2}}, "Statistiques"), h('div', {style:{color:T.muted,fontSize:13}}, salonObj?.name)),
+            h('div', {style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:20}},
+              [["💰","Revenus",`${stats.totalRev.toFixed(0)}€`],["👥","Clients",stats.totalClients],["🧴","Produits",`${stats.totalProd.toFixed(0)}€`]].map(([icon,label,val]) =>
+                h('div', {key:label, style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 10px",textAlign:"center"}}, h('div', {style:{fontSize:20,marginBottom:4}}, icon), h('div', {style:{color:T.text,fontWeight:"700",fontSize:17}}, val), h('div', {style:{color:T.muted,fontSize:10}}, label))
+              )
+            ),
+            h('div', {style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:20,marginBottom:12}},
+              h('div', {style:{fontWeight:"700",fontSize:13,marginBottom:16}}, "Par jour de la semaine"),
+              h('div', {style:{display:"flex",alignItems:"flex-end",gap:6,height:90}},
+                DAYS.map((day,i) => { const hv=stats.byDay[i].rev/maxDay; return h('div', {key:day, style:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}, h('div', {style:{fontSize:8,color:T.muted,height:12}}, stats.byDay[i].rev>0?`${stats.byDay[i].rev.toFixed(0)}€`:""), h('div', {style:{width:"100%",background:hv>0?T.text:T.faint,borderRadius:"3px 3px 0 0",height:`${Math.max(hv*65,3)}px`}}), h('div', {style:{color:T.muted,fontSize:9,fontWeight:"600"}}, day)); })
+              )
+            ),
+            h('div', {style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:20,marginBottom:12}},
+              h('div', {style:{fontWeight:"700",fontSize:13,marginBottom:16}}, "Par mois"),
+              h('div', {style:{display:"flex",alignItems:"flex-end",gap:4,height:90}},
+                MONTHS.map((month,i) => { const hv=stats.byMonth[i].rev/maxMonth; return h('div', {key:month, style:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}, h('div', {style:{width:"100%",background:hv>0?T.text:T.faint,borderRadius:"3px 3px 0 0",height:`${Math.max(hv*65,3)}px`}}), h('div', {style:{color:T.muted,fontSize:8,fontWeight:"600"}}, month)); })
+              )
+            ),
+            h('div', {style:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:20}},
+              h('div', {style:{fontWeight:"700",fontSize:13,marginBottom:16}}, "🏆 Classement"),
+              EMPLOYEES.map((emp,rank) => ({emp,rev:stats.empStats[emp]?.total||0,clients:stats.empStats[emp]?.totalClients||0,prod:Object.values(allProducts[emp]||{}).reduce((s,p)=>s+p.total,0)})).sort((a,b)=>(b.rev+b.prod)-(a.rev+a.prod)).map((item,rank) =>
+                h('div', {key:item.emp, style:{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:`1px solid ${T.faint}`}},
+                  h('span', {style:{fontSize:13,width:22,textAlign:"center"}}, ["🥇","🥈","🥉"][rank]||`${rank+1}.`),
+                  h('div', {style:{width:28,height:28,borderRadius:"50%",background:item.emp===currentEmployee?T.text:T.faint,color:item.emp===currentEmployee?"#fff":T.muted,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:"700"}}, item.emp[0]),
+                  h('div', {style:{flex:1}}, h('div', {style:{color:T.text,fontSize:13,fontWeight:item.emp===currentEmployee?"700":"500"}}, item.emp), h('div', {style:{color:T.muted,fontSize:10}}, `${item.clients} clients · ${item.prod.toFixed(0)}€ produits`)),
+                  h('div', {style:{color:T.text,fontWeight:"700",fontSize:14}}, `${item.rev.toFixed(0)}€`)
+                )
+              )
+            )
+          )
+        )
+      );
+    }
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(h(App));
+  </script>
+</body>
+</html>
