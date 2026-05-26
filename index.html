@@ -79,11 +79,24 @@
       const [prodEsp, setProdEsp] = useState("");
       const [prodCB, setProdCB] = useState("");
       const [savedProd, setSavedProd] = useState(false);
-      const [myPeriod, setMyPeriod] = useState("today");
-      const [mgrPeriod, setMgrPeriod] = useState("today");
+      const [myPeriod, setMyPeriod] = useState("month");
+      const [mgrPeriod, setMgrPeriod] = useState("month");
       const [rankPeriod, setRankPeriod] = useState("month");
       const [allSalonsData, setAllSalonsData] = useState(null);
       const [rankLoading, setRankLoading] = useState(false);
+
+      // Sélecteurs de date
+      const now = new Date();
+      const [selYear, setSelYear]   = useState(now.getFullYear());
+      const [selMonth, setSelMonth] = useState(now.getMonth()); // 0-11
+      const [selDay, setSelDay]     = useState(now.getDate());
+      const [mgrYear, setMgrYear]   = useState(now.getFullYear());
+      const [mgrMonth, setMgrMonth] = useState(now.getMonth());
+      const [mgrDay, setMgrDay]     = useState(now.getDate());
+
+      const YEARS = [2023, 2024, 2025, 2026];
+      const MONTH_NAMES = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
+      const daysInMonth = (y, m) => new Date(y, m+1, 0).getDate();
 
       const EMPLOYEES = currentSalon ? (SALON_EMPLOYEES[currentSalon] || []) : [];
       const salonObj = SALONS.find(s => s.id === currentSalon);
@@ -160,24 +173,36 @@
         setProdEsp(""); setProdCB(""); setSavedProd(true); setTimeout(() => setSavedProd(false), 2000);
       }
 
-      function getEmpTotals(emp, period, data, products) {
+      function getEmpTotals(emp, period, data, products, refYear, refMonth, refDay) {
         const d = data || allData, p = products || allProducts;
-        const now = new Date(), todayKey = getTodayKey();
+        const now = new Date();
+        const rYear  = refYear  !== undefined ? refYear  : now.getFullYear();
+        const rMonth = refMonth !== undefined ? refMonth : now.getMonth();
+        const rDay   = refDay   !== undefined ? refDay   : now.getDate();
+        const refDate = new Date(rYear, rMonth, rDay);
+        const refDateFR = refDate.toLocaleDateString("fr-FR");
+        const todayKey = `${rYear}-${rMonth}-${rDay}`;
         let srvEsp=0, srvCB=0, prodEsp=0, prodCB=0, nbClients=0;
         Object.values(d[emp]||{}).forEach(e => {
-          const m = period==="today"?(e.date===now.toLocaleDateString("fr-FR")&&e.year===now.getFullYear()):period==="month"?(e.year===now.getFullYear()&&e.month===now.getMonth()):(e.year===now.getFullYear());
-          if(m){ srvEsp+=e.especes!==undefined?e.especes:(e.revenue||0); srvCB+=(e.cb||0); nbClients+=e.clients; }
+          let m = false;
+          if (period==="today")  m = (e.date===refDateFR && e.year===rYear);
+          if (period==="month")  m = (e.year===rYear && e.month===rMonth);
+          if (period==="year")   m = (e.year===rYear);
+          if(m){ srvEsp+=e.especes!==undefined?e.especes:(e.revenue||0); srvCB+=(e.cb||0); nbClients+=(e.clients||0); }
         });
         Object.values(p[emp]||{}).forEach(e => {
-          const m = period==="today"?e.dateKey===todayKey:period==="month"?(e.year===now.getFullYear()&&e.month===now.getMonth()):(e.year===now.getFullYear());
+          let m = false;
+          if (period==="today")  m = (e.dateKey===todayKey);
+          if (period==="month")  m = (e.year===rYear && e.month===rMonth);
+          if (period==="year")   m = (e.year===rYear);
           if(m){ prodEsp+=e.especes!==undefined?e.especes:(e.total||0); prodCB+=(e.cb||0); }
         });
         return { srvEsp, srvCB, prodEsp, prodCB, nbClients, srvTotal:srvEsp+srvCB, prodTotal:prodEsp+prodCB, grand:srvEsp+srvCB+prodEsp+prodCB };
       }
 
-      function getSalonTotals(period) {
+      function getSalonTotals(period, rYear, rMonth, rDay) {
         let sE=0,sC=0,pE=0,pC=0,nC=0; const byEmp={};
-        EMPLOYEES.forEach(emp => { const t=getEmpTotals(emp,period); sE+=t.srvEsp; sC+=t.srvCB; pE+=t.prodEsp; pC+=t.prodCB; nC+=t.nbClients; byEmp[emp]=t; });
+        EMPLOYEES.forEach(emp => { const t=getEmpTotals(emp,period,null,null,rYear,rMonth,rDay); sE+=t.srvEsp; sC+=t.srvCB; pE+=t.prodEsp; pC+=t.prodCB; nC+=t.nbClients; byEmp[emp]=t; });
         return { srvEsp:sE,srvCB:sC,prodEsp:pE,prodCB:pC,srvTotal:sE+sC,prodTotal:pE+pC,totalEsp:sE+pE,totalCB:sC+pC,grand:sE+sC+pE+pC,nbClients:nC,byEmp };
       }
 
@@ -225,15 +250,32 @@
       const maxDay = stats ? Math.max(...stats.byDay.map(d=>d.rev),1) : 1;
       const maxMonth = stats ? Math.max(...stats.byMonth.map(m=>m.rev),1) : 1;
       const myProdsMonth = currentEmployee ? Object.values(allProducts[currentEmployee]||{}).filter(p=>{ const now=new Date(); return p.month===now.getMonth()&&p.year===now.getFullYear(); }) : [];
-      const myT = loaded && currentEmployee ? getEmpTotals(currentEmployee, myPeriod) : null;
-      const mgrT = loaded ? getSalonTotals(mgrPeriod) : null;
-      const periodStr = p => ({today:new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"}),month:new Date().toLocaleDateString("fr-FR",{month:"long",year:"numeric"}),year:`Année ${new Date().getFullYear()}`}[p]);
+      const myT = loaded && currentEmployee ? getEmpTotals(currentEmployee, myPeriod, null, null, selYear, selMonth, selDay) : null;
+      const mgrT = loaded ? getSalonTotals(mgrPeriod, mgrYear, mgrMonth, mgrDay) : null;
+      const periodStr = (p, y, m, d) => {
+        if(p==="today") return new Date(y,m,d).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+        if(p==="month") return new Date(y,m,1).toLocaleDateString("fr-FR",{month:"long",year:"numeric"});
+        return `Année ${y}`;
+      };
 
       const IS = { width:"100%", background:T.surface, border:`1.5px solid ${T.border}`, borderRadius:10, padding:"12px 14px", color:T.text, fontSize:16, fontFamily:"'DM Sans',sans-serif", boxSizing:"border-box" };
 
-      const PeriodSel = ({value, onChange}) => h('div', {style:{display:"flex",background:T.faint,borderRadius:10,padding:3,gap:3,marginBottom:20}},
-        [["today","Aujourd'hui"],["month","Ce mois"],["year","Cette année"]].map(([p,label]) =>
-          h('button', {key:p, onClick:()=>onChange(p), style:{flex:1,background:value===p?T.surface:"transparent",color:value===p?T.text:T.muted,border:"none",borderRadius:8,padding:"9px 4px",cursor:"pointer",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:value===p?"600":"400",boxShadow:value===p?"0 1px 4px rgba(0,0,0,0.08)":"none"}}, label)
+      const DateSel = ({period, setPeriod, year, setYear, month, setMonth, day, setDay}) => h('div', {style:{marginBottom:20}},
+        h('div', {style:{display:"flex",background:T.faint,borderRadius:10,padding:3,gap:3,marginBottom:10}},
+          [["today","Jour"],["month","Mois"],["year","Année"]].map(([p,label]) =>
+            h('button', {key:p, onClick:()=>setPeriod(p), style:{flex:1,background:period===p?T.surface:"transparent",color:period===p?T.text:T.muted,border:"none",borderRadius:8,padding:"9px 4px",cursor:"pointer",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:period===p?"600":"400",boxShadow:period===p?"0 1px 4px rgba(0,0,0,0.08)":"none"}}, label)
+          )
+        ),
+        h('div', {style:{display:"flex",gap:8}},
+          h('select', {value:year, onChange:e=>setYear(parseInt(e.target.value)), style:{flex:1,background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px",fontSize:13,fontFamily:"'DM Sans',sans-serif",color:T.text}},
+            YEARS.map(y=>h('option',{key:y,value:y},y))
+          ),
+          (period==="month"||period==="today") && h('select', {value:month, onChange:e=>setMonth(parseInt(e.target.value)), style:{flex:1,background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px",fontSize:13,fontFamily:"'DM Sans',sans-serif",color:T.text}},
+            MONTH_NAMES.map((mn,i)=>h('option',{key:i,value:i},mn))
+          ),
+          period==="today" && h('select', {value:day, onChange:e=>setDay(parseInt(e.target.value)), style:{flex:1,background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px",fontSize:13,fontFamily:"'DM Sans',sans-serif",color:T.text}},
+            Array.from({length:daysInMonth(year,month)},(_,i)=>i+1).map(d=>h('option',{key:d,value:d},d))
+          )
         )
       );
 
@@ -278,7 +320,7 @@
         h('div', {style:{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100}},
           h('div', {style:{display:"flex",alignItems:"center",gap:10}},
             h('div', {style:{width:34,height:34,borderRadius:6,overflow:"hidden",flexShrink:0}},
-              h('img', {src:"logo.png", alt:"TanTan", style:{width:"100%",height:"100%",objectFit:"cover",display:"block"},
+              h('img', {src:"Logo.png", alt:"TanTan", style:{width:"100%",height:"100%",objectFit:"cover",display:"block"},
                 onError: e => { e.target.style.display='none'; e.target.parentNode.innerHTML='✂️'; }})
             ),
             h('div', null,
@@ -306,7 +348,7 @@
           view==="password" && h('div', {style:{paddingTop:40}},
             h('div', {style:{textAlign:"center",marginBottom:32}},
               h('div', {style:{width:80,height:80,borderRadius:16,overflow:"hidden",margin:"0 auto 14px",boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}},
-                h('img', {src:"logo.png",alt:"TanTan",style:{width:"100%",height:"100%",objectFit:"cover",display:"block"}})
+                h('img', {src:"Logo.png",alt:"TanTan",style:{width:"100%",height:"100%",objectFit:"cover",display:"block"}})
               ),
               h('div', {style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:36,letterSpacing:"0.08em",lineHeight:1,marginBottom:6}}, "TanTan Stats"),
               h('div', {style:{color:T.muted,fontSize:14}}, "Entrez votre mot de passe")
@@ -397,8 +439,8 @@
           // MES RÉSULTATS
           view==="totaux" && currentEmployee && myT && h('div', {style:{paddingTop:4}},
             h('div', {style:{marginBottom:20}}, h('div', {style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:"0.05em",marginBottom:2}}, "Mes résultats"), h('div', {style:{color:T.muted,fontSize:13}}, `${currentEmployee} · ${salonObj?.name}`)),
-            h(PeriodSel, {value:myPeriod, onChange:setMyPeriod}),
-            h('div', {style:{color:T.muted,fontSize:11,fontWeight:"600",letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:14,textAlign:"center"}}, periodStr(myPeriod)),
+            h(DateSel, {period:myPeriod, setPeriod:setMyPeriod, year:selYear, setYear:setSelYear, month:selMonth, setMonth:setSelMonth, day:selDay, setDay:setSelDay}),
+            h("div", {style:{color:T.muted,fontSize:11,fontWeight:"600",letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:14,textAlign:"center"}}, periodStr(myPeriod,selYear,selMonth,selDay).toUpperCase()),
             h('div', {style:{background:T.text,borderRadius:16,padding:"28px 20px",textAlign:"center",marginBottom:12}},
               h('div', {style:{color:"rgba(255,255,255,0.5)",fontSize:11,fontWeight:"600",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}, "Mon chiffre d'affaire"),
               h('div', {style:{color:"#fff",fontSize:46,fontWeight:"700",letterSpacing:"-0.03em",lineHeight:1,fontFamily:"'Bebas Neue',sans-serif"}}, `${myT.grand.toFixed(2)}€`),
@@ -440,8 +482,8 @@
           // MANAGER
           view==="manager" && currentEmployee && mgrT && h('div', {style:{paddingTop:4}},
             h('div', {style:{marginBottom:20}}, h('div', {style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:"0.05em",marginBottom:2}}, "Vue Manager"), h('div', {style:{color:T.muted,fontSize:13}}, `${salonObj?.name} · tous les barbiers`)),
-            h(PeriodSel, {value:mgrPeriod, onChange:setMgrPeriod}),
-            h('div', {style:{color:T.muted,fontSize:11,fontWeight:"600",letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:14,textAlign:"center"}}, periodStr(mgrPeriod)),
+            h(DateSel, {period:mgrPeriod, setPeriod:setMgrPeriod, year:mgrYear, setYear:setMgrYear, month:mgrMonth, setMonth:setMgrMonth, day:mgrDay, setDay:setMgrDay}),
+            h("div", {style:{color:T.muted,fontSize:11,fontWeight:"600",letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:14,textAlign:"center"}}, periodStr(mgrPeriod,mgrYear,mgrMonth,mgrDay).toUpperCase()),
             h('div', {style:{background:T.text,borderRadius:16,padding:"28px 20px",textAlign:"center",marginBottom:12}},
               h('div', {style:{color:"rgba(255,255,255,0.5)",fontSize:11,fontWeight:"600",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}, "CA Salon"),
               h('div', {style:{color:"#fff",fontSize:46,fontWeight:"700",letterSpacing:"-0.03em",lineHeight:1,fontFamily:"'Bebas Neue',sans-serif"}}, `${mgrT.grand.toFixed(2)}€`),
